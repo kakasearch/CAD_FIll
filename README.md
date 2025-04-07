@@ -11,4 +11,4 @@
  2. 如多边形生成失败，可先在cad中通过`boundary`命令拾取边界
  3. 填充图案的图案样式、颜色、比例等可通过`config.json`中修改
  4. `config.json`中的`is_visual`用于过程调试，使用时默认关闭
-
+ 5. 使用`pyinstaller`打包时，需要使用`pyinstaller --hidden-import=scipy._lib.array_api_compat.numpy.fft main.py`或`pyinstaller main.spec`打包，以避免出现打包后依赖库缺失
