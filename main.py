@@ -44,9 +44,9 @@ def main_process():
 
             app.fill_polygon(
                 polygon_coords + polygon_coords[:1],
-                hatch_pattern= cfg.get("fill_pattern"),
-                color= cfg.get("fill_color"),
-                scale = cfg.get("fill_scale")
+                hatch_pattern= cfg.fill_pattern,
+                color= cfg.fill_color,
+                scale = cfg.fill_scale
             )
             polyline = app.create_polyline(cutting_line.coords) # 将所有边界合并为一个多段线
             if polyline:

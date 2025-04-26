@@ -19,16 +19,15 @@ class CadApp:
             try:
                 # 尝试获取现有的 AutoCAD 实例
                 acad = win32com.client.Dispatch("AutoCAD.Application")
+                self._doc = acad.ActiveDocument
+                self._msp = self._doc.ModelSpace
             except Exception as e:
                 print(f"【提示】无法连接到 AutoCAD，重新连接中: {e}")
                 time.sleep(1)
                 continue
-
-        if not acad or not acad.ActiveDocument:
+        if not self._doc:
             return False
-
-        self._doc = acad.ActiveDocument
-        self._msp = acad.doc.ModelSpace
+        return True
 
 
     # 获取 AutoCAD 中当前选中的直线和多段线（使用 pywin32）
@@ -102,7 +101,7 @@ class CadApp:
         return coords
 
 
-    def _extend_point(point, direction, extend_length):
+    def _extend_point(self,point, direction, extend_length):
         """
         延长给定点沿着指定方向的长度
         参数:
@@ -116,6 +115,82 @@ class CadApp:
         unit_direction = direction / np.linalg.norm(direction)  # 单位化方向向量
         new_point = np.array(point) + unit_direction * extend_length
         return (float(new_point[0]), float(new_point[1]))
+
+    def is_collinear(self,p1, p2, p3):
+        """判断三个点是否共线"""
+        x1, y1 = p1
+        x2, y2 = p2
+        x3, y3 = p3
+        # 使用斜率判断，考虑误差
+        if abs(x2 - x1) < 1e-10:  # 垂直线的情况
+            return abs(x3 - x1) < 1e-10
+        if abs(x3 - x2) < 1e-10:  # 垂直线的情况
+            return abs(x2 - x1) < 1e-10
+        
+        slope1 = (y2 - y1) / (x2 - x1)
+        slope2 = (y3 - y2) / (x3 - x2)
+        return abs(slope1 - slope2) < 1e-10
+
+    def _segments_overlap(self,seg1, seg2):
+        """判断两条线段是否重叠（共线且有重叠部分）"""
+        (x1, y1), (x2, y2) = seg1
+        (x3, y3), (x4, y4) = seg2
+        
+        # 首先判断是否共线
+        if not (self.is_collinear((x1, y1), (x2, y2), (x3, y3)) and 
+                self.is_collinear((x1, y1), (x2, y2), (x4, y4))):
+            return False
+        
+        # 如果是垂直线
+        if abs(x2 - x1) < 1e-10:
+            y_min1, y_max1 = min(y1, y2), max(y1, y2)
+            y_min2, y_max2 = min(y3, y4), max(y3, y4)
+            return not (y_max1 < y_min2 or y_max2 < y_min1)
+        
+        # 如果是水平线或斜线
+        x_min1, x_max1 = min(x1, x2), max(x1, x2)
+        x_min2, x_max2 = min(x3, x4), max(x3, x4)
+        return not (x_max1 < x_min2 or x_max2 < x_min1)
+
+    def _merge_two_segments(self,seg1, seg2):
+        """合并两条重叠的线段"""
+        (x1, y1), (x2, y2) = seg1
+        (x3, y3), (x4, y4) = seg2
+        
+        # 如果是垂直线
+        if abs(x2 - x1) < 1e-10:
+            points = [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+            points.sort(key=lambda p: p[1])  # 按y坐标排序
+            return [points[0], points[-1]]  # 返回y坐标最小和最大的点
+        
+        # 如果是水平线或斜线
+        points = [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+        points.sort(key=lambda p: p[0])  # 按x坐标排序
+        return [points[0], points[-1]]  # 返回x坐标最小和最大的点
+
+    def _merge_segments(self,segments):
+        if not segments:
+            return []
+        
+        result = segments.copy()
+        i = 0
+        
+        while i < len(result):
+            j = i + 1
+            merged = False
+            while j < len(result):
+                if self._segments_overlap(result[i], result[j]):
+                    # 合并重叠的线段
+                    merged_segment = self._merge_two_segments(result[i], result[j])
+                    result[i] = merged_segment
+                    result.pop(j)
+                    merged = True
+                else:
+                    j += 1
+            if not merged:
+                i += 1
+        
+        return result
 
 
     def _extend_segments(self, segments, extend_length):
@@ -146,7 +221,7 @@ class CadApp:
         return extended_segments
 
 
-    def _get_intersection(seg1: Segment, seg2: Segment) -> Tuple[float, float]:
+    def _get_intersection(self,seg1: Segment, seg2: Segment) -> Tuple[float, float]:
         """计算两条线段的交点，使用numpy加速计算"""
         if not seg1.bbox.overlaps(seg2.bbox):
             return None
@@ -303,7 +378,7 @@ class CadApp:
         return result
 
 
-    def _is_same_segment(seg1, seg2):
+    def _is_same_segment(self,seg1, seg2):
         """检查两个线段是否相同（考虑正向和反向）"""
         # 正向比较
         forward_same = (seg1[0] == seg2[0] and seg1[1]==seg2[1])
@@ -353,7 +428,7 @@ class CadApp:
         return unique_segments
 
 
-    def visualize_segments_and_polygons(original_segments, result_segments, polygon):
+    def visualize_segments_and_polygons(self,original_segments, result_segments, polygon):
         """
         可视化原始线段、处理后的线段和生成的多边形
         """
@@ -425,7 +500,7 @@ class CadApp:
         return polygons
 
 
-    def create_polygon(self, segments_datas, cfg: dict):
+    def create_polygon(self, segments_datas, cfg):
         #输入线段列表，输出多边形
         try:
             # 扩展线段
@@ -449,7 +524,7 @@ class CadApp:
         except Exception as e:
             print(f"边界识别错误(边间简化出错): {e}")
             return None,None
-        if cfg.get("is_visual",False):
+        if cfg.is_visual:
             self.visualize_segments_and_polygons(extended,result1, Polygon([(0,0),(0,100),(100,100),(100,0)]))
         try:
             #转化为多边形
@@ -635,13 +710,13 @@ class CadApp:
         return cutting_line, lower_polygon
 
 
-    def _vtpnt(x, y, z=0):
+    def _vtpnt(self,x, y, z=0):
         return win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (x, y, z))
 
-    def _vtobj(obj):
+    def _vtobj(self,obj):
         return win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, obj)
 
-    def _vtfloat(lst):
+    def _vtfloat(self,lst):
         return win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, lst)
 
 
